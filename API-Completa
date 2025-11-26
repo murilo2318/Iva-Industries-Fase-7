@@ -1,0 +1,271 @@
+# ================================================================
+# main.py — API COMPLETA UNIFICADA (FastAPI + SQLAlchemy + ML)
+# ================================================================
+
+from fastapi import FastAPI, APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session, relationship
+import datetime
+import numpy as np
+from sklearn.linear_model import LinearRegression
+
+
+# ================================================================
+# CORE - CONFIG + DATABASE
+# ================================================================
+
+DATABASE_URL = "sqlite:///./iva.db"
+
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# ================================================================
+# MODELS
+# ================================================================
+
+class Machine(Base):
+    __tablename__ = "machines"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    status = Column(String)
+    location = Column(String)
+    sensors = relationship("Sensor", back_populates="machine")
+    productions = relationship("Production", back_populates="machine")
+    maintenances = relationship("Maintenance", back_populates="machine")
+
+
+class Sensor(Base):
+    __tablename__ = "sensors"
+    id = Column(Integer, primary_key=True, index=True)
+    type = Column(String)
+    value = Column(Float)
+    machine_id = Column(Integer, ForeignKey("machines.id"))
+    machine = relationship("Machine", back_populates="sensors")
+
+
+class Production(Base):
+    __tablename__ = "production"
+    id = Column(Integer, primary_key=True, index=True)
+    machine_id = Column(Integer, ForeignKey("machines.id"))
+    quantity = Column(Integer)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    machine = relationship("Machine", back_populates="productions")
+
+
+class Maintenance(Base):
+    __tablename__ = "maintenance"
+    id = Column(Integer, primary_key=True, index=True)
+    machine_id = Column(Integer, ForeignKey("machines.id"))
+    description = Column(String)
+    date = Column(DateTime, default=datetime.datetime.utcnow)
+    machine = relationship("Machine", back_populates="maintenances")
+
+
+# ================================================================
+# SCHEMAS (Pydantic)
+# ================================================================
+
+class MachineBase(BaseModel):
+    name: str
+    status: str
+    location: str
+
+
+class MachineCreate(MachineBase):
+    pass
+
+
+class MachineOut(MachineBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class SensorBase(BaseModel):
+    type: str
+    value: float
+    machine_id: int
+
+
+class SensorCreate(SensorBase):
+    pass
+
+
+class SensorOut(SensorBase):
+    id: int
+
+    class Config:
+        orm_mode = True
+
+
+class ProductionBase(BaseModel):
+    machine_id: int
+    quantity: int
+
+
+class ProductionCreate(ProductionBase):
+    pass
+
+
+class ProductionOut(ProductionBase):
+    id: int
+    timestamp: datetime.datetime
+
+    class Config:
+        orm_mode = True
+
+
+class MaintenanceBase(BaseModel):
+    machine_id: int
+    description: str
+
+
+class MaintenanceCreate(MaintenanceBase):
+    pass
+
+
+class MaintenanceOut(MaintenanceBase):
+    id: int
+    date: datetime.datetime
+
+    class Config:
+        orm_mode = True
+
+
+# ================================================================
+# SERVICE — SIMPLE ML FORECASTING
+# ================================================================
+
+def forecast_production(values: List[int], future_days: int = 7):
+    if len(values) < 2:
+        return [values[-1]] * future_days
+
+    X = np.arange(len(values)).reshape(-1, 1)
+    y = np.array(values)
+
+    model = LinearRegression()
+    model.fit(X, y)
+
+    future = np.arange(len(values), len(values) + future_days).reshape(-1, 1)
+    prediction = model.predict(future)
+
+    return prediction.tolist()
+
+
+# ================================================================
+# ROUTES
+# ================================================================
+
+router_machines = APIRouter(prefix="/machines", tags=["Machines"])
+router_sensors = APIRouter(prefix="/sensors", tags=["Sensors"])
+router_production = APIRouter(prefix="/production", tags=["Production"])
+router_maintenance = APIRouter(prefix="/maintenance", tags=["Maintenance"])
+
+
+# --- MACHINES ---
+@router_machines.post("/", response_model=MachineOut)
+def create_machine(machine: MachineCreate, db: Session = Depends(get_db)):
+    db_machine = Machine(**machine.dict())
+    db.add(db_machine)
+    db.commit()
+    db.refresh(db_machine)
+    return db_machine
+
+
+@router_machines.get("/", response_model=List[MachineOut])
+def get_machines(db: Session = Depends(get_db)):
+    return db.query(Machine).all()
+
+
+# --- SENSORS ---
+@router_sensors.post("/", response_model=SensorOut)
+def create_sensor(sensor: SensorCreate, db: Session = Depends(get_db)):
+    db_sensor = Sensor(**sensor.dict())
+    db.add(db_sensor)
+    db.commit()
+    db.refresh(db_sensor)
+    return db_sensor
+
+
+@router_sensors.get("/", response_model=List[SensorOut])
+def get_sensors(db: Session = Depends(get_db)):
+    return db.query(Sensor).all()
+
+
+# --- PRODUCTION ---
+@router_production.post("/", response_model=ProductionOut)
+def create_production(p: ProductionCreate, db: Session = Depends(get_db)):
+    db_prod = Production(**p.dict())
+    db.add(db_prod)
+    db.commit()
+    db.refresh(db_prod)
+    return db_prod
+
+
+@router_production.get("/", response_model=List[ProductionOut])
+def get_productions(db: Session = Depends(get_db)):
+    return db.query(Production).all()
+
+
+@router_production.get("/forecast/{machine_id}")
+def forecast(machine_id: int, db: Session = Depends(get_db)):
+    production_data = (
+        db.query(Production)
+        .filter(Production.machine_id == machine_id)
+        .order_by(Production.timestamp)
+        .all()
+    )
+
+    if not production_data:
+        raise HTTPException(404, "Nenhuma produção encontrada.")
+
+    quantities = [p.quantity for p in production_data]
+
+    result = forecast_production(quantities, future_days=7)
+    return {"machine_id": machine_id, "forecast_next_7_days": result}
+
+
+# --- MAINTENANCE ---
+@router_maintenance.post("/", response_model=MaintenanceOut)
+def create_maintenance(m: MaintenanceCreate, db: Session = Depends(get_db)):
+    db_m = Maintenance(**m.dict())
+    db.add(db_m)
+    db.commit()
+    db.refresh(db_m)
+    return db_m
+
+
+@router_maintenance.get("/", response_model=List[MaintenanceOut])
+def get_maintenance(db: Session = Depends(get_db)):
+    return db.query(Maintenance).all()
+
+
+# ================================================================
+# FASTAPI APP ROOT
+# ================================================================
+
+app = FastAPI(title="IVA Industries — API Unificada")
+
+app.include_router(router_machines)
+app.include_router(router_sensors)
+app.include_router(router_production)
+app.include_router(router_maintenance)
+
+
+# Criar tabelas automaticamente
+Base.metadata.create_all(bind=engine)
