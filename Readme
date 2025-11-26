@@ -1,0 +1,194 @@
+# IVA Industries — API Unificada (FastAPI + SQLAlchemy + Machine Learning)
+
+Esta API foi desenvolvida como parte da Fase 7 do projeto acadêmico da IVA Industries.  
+Ela unifica em um único arquivo Python todos os recursos essenciais de um sistema industrial moderno:
+
+- Gerenciamento de máquinas
+- Sensores conectados
+- Produção industrial
+- Registros de manutenção
+- Previsões automáticas de produção com IA
+
+A API segue a proposta de um **MVP completo**, simples de rodar, forte academicamente, e pronta para colocar em produção.
+
+---
+
+##  Tecnologias Utilizadas
+
+| Componente | Tecnologia |
+|-----------|------------|
+| Framework Backend | FastAPI |
+| Banco de Dados | SQLite + SQLAlchemy |
+| Modelagem | Pydantic |
+| IA | Scikit-learn (Regressão Linear) |
+| Servidor | Uvicorn |
+| Linguagem | Python 3.10+ |
+
+---
+
+## Estrutura do Projeto
+
+Toda a API foi construída em um único arquivo consolidado chamada **`main.py`**, contendo:
+
+- Rotas (Machines, Sensors, Production, Maintenance)
+- Modelos ORM SQLAlchemy
+- Schemas Pydantic
+- Database + Config
+- Serviço de IA para previsão
+- Início FastAPI
+
+Arquitetura lógica interna:
+
+```
+main.py
+ ├── core/config
+ ├── core/database
+ ├── models/
+ ├── schemas/
+ ├── routes/
+ └── services/ml_forecasting
+```
+
+---
+
+##  Instalação e Execução
+
+### 1️⃣ Clonar o repositório
+```bash
+git clone https://github.com/murilo2318/Iva-Industries-Fase-7.git
+cd Iva-Industries-Fase-7
+```
+
+### 2️⃣ Instalar dependências
+```bash
+pip install fastapi uvicorn sqlalchemy scikit-learn pydantic
+```
+
+### 3️⃣ Executar o servidor
+```bash
+uvicorn main:app --reload
+```
+
+### 4️⃣ Acessar documentação interativa
+- Swagger UI → http://127.0.0.1:8000/docs  
+- ReDoc → http://127.0.0.1:8000/redoc  
+
+---
+
+#  Endpoints da API
+
+## 1. Machines (Máquinas)
+
+### ➕ Criar Máquina  
+**POST** `/machines/`
+```json
+{
+  "name": "Prensa 5000",
+  "status": "ativo",
+  "location": "Linha 2"
+}
+```
+
+###  Listar Máquinas  
+**GET** `/machines/`
+
+---
+
+##  2. Sensors (Sensores)
+
+### ➕ Criar Sensor  
+**POST** `/sensors/`
+
+```json
+{
+  "type": "temperatura",
+  "value": 78.5,
+  "machine_id": 1
+}
+```
+
+###  Listar Sensores  
+**GET** `/sensors/`
+
+---
+
+##  3. Production (Produção)
+
+### ➕ Registrar Produção  
+**POST** `/production/`
+```json
+{
+  "machine_id": 1,
+  "quantity": 52
+}
+```
+
+### 📄 Listar Produção  
+**GET** `/production/`
+
+---
+
+## Previsão de Produção (IA)
+
+A API utiliza um modelo de **Regressão Linear** para prever a produção futura de cada máquina.
+
+### 📈 Previsão para os próximos 7 dias  
+**GET** `/production/forecast/{machine_id}`
+
+Resposta exemplo:
+
+```json
+{
+  "machine_id": 1,
+  "forecast_next_7_days": [50, 51, 52, 53, 55, 56, 57]
+}
+```
+
+---
+
+# 4. Maintenance (Manutenção)
+
+### ➕ Registrar Manutenção  
+**POST** `/maintenance/`
+
+```json
+{
+  "machine_id": 1,
+  "description": "Troca de rolamentos e ajustes."
+}
+```
+
+### 📄 Listar Manutenção  
+**GET** `/maintenance/`
+
+---
+
+# Serviço de IA (Machine Learning)
+
+O sistema contém um mini-módulo de IA integrado, que funciona assim:
+
+- Coleta o histórico de produção
+- Treina automaticamente um modelo `LinearRegression`
+- Gera previsão para os próximos 7 dias
+- Não exige configuração extra
+
+Fluxo do modelo:
+
+```
+historical_data → treinamento → previsão → retorno JSON
+```
+---
+
+# Requisitos Acadêmicos Atendidos
+
+✔ MVP funcional  
+✔ IA integrada (machine learning real)  
+✔ CRUD completo  
+✔ ORM (SQLAlchemy)  
+✔ Documentação técnica completa  
+✔ Endpoint de previsão  
+✔ Estrutura profissional  
+✔ Rotas, modelos, schemas e serviços  
+✔ Banco de dados real  
+✔ Código consolidado em um único arquivo para facilitar entrega
+
