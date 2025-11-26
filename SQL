@@ -1,0 +1,252 @@
+-- ===================================================================
+-- IVA INDUSTRIES — SCRIPT FINAL: SCHEMA + DADOS (PostgreSQL)
+-- Arquivo recomendado: database/final_schema_and_seed.sql
+-- Execução (ex.): psql -U <user> -d <db> -f final_schema_and_seed.sql
+-- ===================================================================
+
+BEGIN;
+
+-- -----------------------
+-- 1) TIPOS / NORMALIZAÇÃO
+-- -----------------------
+
+CREATE TABLE IF NOT EXISTS machine_types (
+    id_type SERIAL PRIMARY KEY,
+    name VARCHAR(80) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS sensor_types (
+    id_sensor_type SERIAL PRIMARY KEY,
+    name VARCHAR(80) NOT NULL UNIQUE,
+    unit_default VARCHAR(20)
+);
+
+-- -----------------------
+-- 2) MÁQUINAS E SENSORES
+-- -----------------------
+
+CREATE TABLE IF NOT EXISTS machines (
+    id_machine SERIAL PRIMARY KEY,
+    name VARCHAR(150) NOT NULL,
+    type INTEGER NOT NULL,
+    location VARCHAR(150),
+    installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'ativa',
+    CHECK (status IN ('ativa','manutenção','parada')),
+    CONSTRAINT fk_machine_type FOREIGN KEY (type) REFERENCES machine_types (id_type) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS sensors (
+    id_sensor SERIAL PRIMARY KEY,
+    id_machine INTEGER NOT NULL,
+    sensor_type INTEGER NOT NULL,
+    label VARCHAR(120),
+    unit VARCHAR(20),
+    min_value DOUBLE PRECISION,
+    max_value DOUBLE PRECISION,
+    installed_at TIMESTAMP,
+    active BOOLEAN DEFAULT TRUE,
+    CONSTRAINT fk_sensor_machine FOREIGN KEY (id_machine) REFERENCES machines (id_machine) ON DELETE CASCADE,
+    CONSTRAINT fk_sensor_type FOREIGN KEY (sensor_type) REFERENCES sensor_types (id_sensor_type) ON DELETE RESTRICT
+);
+
+-- -----------------------
+-- 3) LEITURAS / PREDIÇÕES / MANUTENÇÃO / LOGS
+-- -----------------------
+
+CREATE TABLE IF NOT EXISTS readings (
+    id_reading BIGSERIAL PRIMARY KEY,
+    id_sensor INTEGER NOT NULL,
+    value DOUBLE PRECISION NOT NULL,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    raw_payload JSONB,
+    CONSTRAINT fk_reading_sensor FOREIGN KEY (id_sensor) REFERENCES sensors (id_sensor) ON DELETE CASCADE,
+    CHECK (value BETWEEN -1000000 AND 1000000)
+);
+
+CREATE TABLE IF NOT EXISTS predictions (
+    id_prediction BIGSERIAL PRIMARY KEY,
+    id_sensor INTEGER,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    model_name VARCHAR(100),
+    risk_score DOUBLE PRECISION CHECK (risk_score >= 0 AND risk_score <= 1),
+    anomaly BOOLEAN,
+    recommendation TEXT,
+    input_payload JSONB,
+    CONSTRAINT fk_prediction_sensor FOREIGN KEY (id_sensor) REFERENCES sensors (id_sensor) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS maintenance (
+    id_maintenance BIGSERIAL PRIMARY KEY,
+    id_machine INTEGER NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    severity VARCHAR(20),
+    description TEXT,
+    status VARCHAR(20) DEFAULT 'aberto',
+    scheduled_for TIMESTAMP,
+    closed_at TIMESTAMP,
+    CONSTRAINT fk_maintenance_machine FOREIGN KEY (id_machine) REFERENCES machines (id_machine) ON DELETE CASCADE,
+    CHECK (severity IN ('baixa','media','alta')),
+    CHECK (status IN ('aberto','em andamento','concluido'))
+);
+
+CREATE TABLE IF NOT EXISTS system_logs (
+    id_log BIGSERIAL PRIMARY KEY,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    level VARCHAR(10) CHECK (level IN ('INFO','WARNING','ERROR')),
+    component VARCHAR(80),
+    message TEXT
+);
+
+-- -----------------------
+-- 4) ÍNDICES IMPORTANTES
+-- -----------------------
+
+CREATE INDEX IF NOT EXISTS idx_readings_sensor_ts ON readings (id_sensor, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_predictions_sensor_ts ON predictions (id_sensor, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_maintenance_machine_created ON maintenance (id_machine, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sensors_machine ON sensors (id_machine);
+
+-- -----------------------
+-- 5) SEED: dados realistas
+-- -----------------------
+
+-- a) Tipos de máquinas
+INSERT INTO machine_types (name) VALUES
+('Turbina Industrial'),
+('Caldeira Térmica'),
+('Compressor de Ar'),
+('Esteira Transportadora'),
+('Gerador Elétrico'),
+('Forno de Fusão')
+ON CONFLICT (name) DO NOTHING;
+
+-- b) Tipos de sensores
+INSERT INTO sensor_types (name, unit_default) VALUES
+('Temperatura','°C'),
+('Pressão','bar'),
+('Vibração','mm/s'),
+('Umidade','%'),
+('Fluxo de Ar','m³/min'),
+('Nível de Combustível','%'),
+('Corrente Elétrica','A'),
+('Tensão Elétrica','V')
+ON CONFLICT (name) DO NOTHING;
+
+-- c) Máquinas (exemplos)
+INSERT INTO machines (name, type, location, status) VALUES
+('Turbina Principal 01', (SELECT id_type FROM machine_types WHERE name='Turbina Industrial'), 'Sala de Máquinas A', 'ativa'),
+('Caldeira Alta Pressão 07', (SELECT id_type FROM machine_types WHERE name='Caldeira Térmica'), 'Setor Térmico', 'ativa'),
+('Compressor AR-210', (SELECT id_type FROM machine_types WHERE name='Compressor de Ar'), 'Galpão Industrial 3', 'manutenção'),
+('Esteira Linha 5', (SELECT id_type FROM machine_types WHERE name='Esteira Transportadora'), 'Área Logística 2', 'ativa'),
+('Gerador Auxiliar GX-90', (SELECT id_type FROM machine_types WHERE name='Gerador Elétrico'), 'Sala Elétrica 1', 'ativa'),
+('Forno Fusão F-12', (SELECT id_type FROM machine_types WHERE name='Forno de Fusão'), 'Setor Metalurgia', 'ativa')
+ON CONFLICT (name) DO NOTHING;
+
+-- d) Sensores por máquina (vários sensores coerentes)
+-- Turbina Principal 01 (assume id_machine = 1)
+INSERT INTO sensors (id_machine, sensor_type, label, unit, min_value, max_value, installed_at) VALUES
+((SELECT id_machine FROM machines WHERE name='Turbina Principal 01'), (SELECT id_sensor_type FROM sensor_types WHERE name='Temperatura'), 'Turbina Temp Sensor 1', '°C', 0, 1200, NOW()),
+((SELECT id_machine FROM machines WHERE name='Turbina Principal 01'), (SELECT id_sensor_type FROM sensor_types WHERE name='Vibração'), 'Turbina Vib Sensor 1', 'mm/s', 0, 200, NOW()),
+((SELECT id_machine FROM machines WHERE name='Turbina Principal 01'), (SELECT id_sensor_type FROM sensor_types WHERE name='Tensão Elétrica'), 'Turbina Tensão Sensor', 'V', 100, 480, NOW())
+ON CONFLICT DO NOTHING;
+
+-- Caldeira
+INSERT INTO sensors (id_machine, sensor_type, label, unit, min_value, max_value, installed_at) VALUES
+((SELECT id_machine FROM machines WHERE name='Caldeira Alta Pressão 07'), (SELECT id_sensor_type FROM sensor_types WHERE name='Temperatura'), 'Caldeira Temp Sensor', '°C', 0, 1200, NOW()),
+((SELECT id_machine FROM machines WHERE name='Caldeira Alta Pressão 07'), (SELECT id_sensor_type FROM sensor_types WHERE name='Pressão'), 'Caldeira Press Sensor', 'bar', 0, 300, NOW()),
+((SELECT id_machine FROM machines WHERE name='Caldeira Alta Pressão 07'), (SELECT id_sensor_type FROM sensor_types WHERE name='Nível de Combustível'), 'Caldeira Fuel Level', '%', 0, 100, NOW())
+ON CONFLICT DO NOTHING;
+
+-- Compressor
+INSERT INTO sensors (id_machine, sensor_type, label, unit, min_value, max_value, installed_at) VALUES
+((SELECT id_machine FROM machines WHERE name='Compressor AR-210'), (SELECT id_sensor_type FROM sensor_types WHERE name='Pressão'), 'Comp Press Sensor', 'bar', 0, 200, NOW()),
+((SELECT id_machine FROM machines WHERE name='Compressor AR-210'), (SELECT id_sensor_type FROM sensor_types WHERE name='Vibração'), 'Comp Vib Sensor', 'mm/s', 0, 200, NOW())
+ON CONFLICT DO NOTHING;
+
+-- Esteira
+INSERT INTO sensors (id_machine, sensor_type, label, unit, min_value, max_value, installed_at) VALUES
+((SELECT id_machine FROM machines WHERE name='Esteira Linha 5'), (SELECT id_sensor_type FROM sensor_types WHERE name='Vibração'), 'Esteira Vib', 'mm/s', 0, 50, NOW()),
+((SELECT id_machine FROM machines WHERE name='Esteira Linha 5'), (SELECT id_sensor_type FROM sensor_types WHERE name='Umidade'), 'Esteira Umidade', '%', 0, 100, NOW())
+ON CONFLICT DO NOTHING;
+
+-- Gerador GX-90
+INSERT INTO sensors (id_machine, sensor_type, label, unit, min_value, max_value, installed_at) VALUES
+((SELECT id_machine FROM machines WHERE name='Gerador Auxiliar GX-90'), (SELECT id_sensor_type FROM sensor_types WHERE name='Corrente Elétrica'), 'Gerador Corrente', 'A', 0, 500, NOW()),
+((SELECT id_machine FROM machines WHERE name='Gerador Auxiliar GX-90'), (SELECT id_sensor_type FROM sensor_types WHERE name='Tensão Elétrica'), 'Gerador Tensão', 'V', 0, 480, NOW())
+ON CONFLICT DO NOTHING;
+
+-- Forno Fusão
+INSERT INTO sensors (id_machine, sensor_type, label, unit, min_value, max_value, installed_at) VALUES
+((SELECT id_machine FROM machines WHERE name='Forno Fusão F-12'), (SELECT id_sensor_type FROM sensor_types WHERE name='Temperatura'), 'Forno Temp', '°C', 0, 2000, NOW()),
+((SELECT id_machine FROM machines WHERE name='Forno Fusão F-12'), (SELECT id_sensor_type FROM sensor_types WHERE name='Corrente Elétrica'), 'Forno Corrente', 'A', 0, 400, NOW())
+ON CONFLICT DO NOTHING;
+
+-- e) Leituras simuladas (exemplo: 30 leituras distribuídas em sensores principais)
+-- Observação: para grandes volumes, considere gerar via script Python. Aqui são amostras manuais coerentes.
+
+INSERT INTO readings (id_sensor, value, timestamp, raw_payload) VALUES
+-- Turbina Temp sensor (assume sensor exists)
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Turbina Principal 01' AND s.label ILIKE '%Temp%') , 420.5, '2025-11-20 10:00:00', '{"note":"operacao normal"}'),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Turbina Principal 01' AND s.label ILIKE '%Temp%') , 438.7, '2025-11-20 10:05:00', '{"note":"subida de carga"}'),
+
+-- Turbina Vib
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Turbina Principal 01' AND s.label ILIKE '%Vib%') , 12.4, '2025-11-20 10:00:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Turbina Principal 01' AND s.label ILIKE '%Vib%') , 15.8, '2025-11-20 10:05:00', NULL),
+
+-- Turbina Tensão
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Turbina Principal 01' AND s.label ILIKE '%Tensão%') , 385.2, '2025-11-20 10:00:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Turbina Principal 01' AND s.label ILIKE '%Tensão%') , 392.9, '2025-11-20 10:05:00', NULL),
+
+-- Caldeira Temp
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Caldeira Alta Pressão 07' AND s.label ILIKE '%Temp%') , 720.1, '2025-11-20 09:50:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Caldeira Alta Pressão 07' AND s.label ILIKE '%Temp%') , 730.4, '2025-11-20 10:10:00', NULL),
+
+-- Caldeira Pressão
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Caldeira Alta Pressão 07' AND s.label ILIKE '%Press%') , 120.3, '2025-11-20 09:55:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Caldeira Alta Pressão 07' AND s.label ILIKE '%Press%') , 118.9, '2025-11-20 10:12:00', NULL),
+
+-- Compressor Press
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Compressor AR-210' AND s.label ILIKE '%Press%') , 8.4, '2025-11-20 10:00:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Compressor AR-210' AND s.label ILIKE '%Press%') , 8.6, '2025-11-20 10:07:00', NULL),
+
+-- Esteira Vib
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Esteira Linha 5' AND s.label ILIKE '%Vib%') , 3.1, '2025-11-20 10:00:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Esteira Linha 5' AND s.label ILIKE '%Vib%') , 3.6, '2025-11-20 10:05:00', NULL),
+
+-- Gerador Corrente
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Gerador Auxiliar GX-90' AND s.label ILIKE '%Corrente%') , 128.2, '2025-11-20 09:59:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Gerador Auxiliar GX-90' AND s.label ILIKE '%Corrente%') , 132.5, '2025-11-20 10:04:00', NULL),
+
+-- Forno Temp (alto)
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Forno Fusão F-12' AND s.label ILIKE '%Forno Temp%') , 1200.0, '2025-11-20 09:58:00', NULL),
+((SELECT s.id_sensor FROM sensors s JOIN machines m ON s.id_machine=m.id_machine WHERE m.name='Forno Fusão F-12' AND s.label ILIKE '%Forno Temp%') , 1250.7, '2025-11-20 10:03:00', NULL);
+
+-- f) Predições (exemplos com risk_score)
+INSERT INTO predictions (id_sensor, model_name, risk_score, anomaly, recommendation, input_payload) VALUES
+((SELECT id_sensor FROM sensors WHERE label ILIKE '%Turbina Temp%'), 'rf_v1', 0.82, TRUE, 'Temperatura crítica: reduzir carga e iniciar inspeção do rotor.', '{"features":{"area":null}}'),
+((SELECT id_sensor FROM sensors WHERE label ILIKE '%Turbina Vib%'), 'rf_v1', 0.45, FALSE, NULL, '{"features":{}}'),
+((SELECT id_sensor FROM sensors WHERE label ILIKE '%Turbina Tensão%'), 'rf_v1', 0.91, TRUE, 'Tensão instável: verificar regulador e cabos.', '{"features":{}}');
+
+-- g) Manutenções (exemplo: abrir ordens para riscos altos)
+INSERT INTO maintenance (id_machine, severity, description, status, scheduled_for) VALUES
+((SELECT id_machine FROM machines WHERE name='Turbina Principal 01'), 'alta', 'Superaquecimento detectado por sensores de temperatura; inspeção imediata requerida.', 'aberto', NOW() + INTERVAL '2 hours'),
+((SELECT id_machine FROM machines WHERE name='Gerador Auxiliar GX-90'), 'media', 'Oscilações de corrente detectadas; revisão preventiva agendada.', 'em andamento', NOW() + INTERVAL '24 hours');
+
+-- h) System logs exemplo
+INSERT INTO system_logs (level, component, message) VALUES
+('INFO', 'db_init', 'Database schema created and seed data inserted.'),
+('WARNING', 'predictor', 'Model rf_v1 returned high risk for sensor X (id unknown in seed).');
+
+-- -----------------------
+-- 6) FIM DO SEED
+-- -----------------------
+
+COMMIT;
+
+-- ===================================================================
+-- Observações finais:
+-- - Para popular grandes volumes de leituras (para treino ML), gere via script Python/CSV.
+-- - Se usar SQLite local, ajuste tipos SERIAL -> INTEGER AUTOINCREMENT (ou use o schema adaptado).
+-- - Verifique permissões do usuário do DB antes de executar.
+-- ===================================================================
